@@ -1,5 +1,5 @@
 [package]
-name = "emoji-index-rs"
+name = "emoji_index"
 version = "0.1.0"
 authors = ["Dav1do <dav1do@@users.noreply.github.com>"]
 edition = "2018"
