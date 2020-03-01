@@ -30,13 +30,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .find(|u| u.real_name == Some(BOT_NAME.to_string()))
         .expect("unable to find our bot user. exiting");
 
-    //this will have the public join channels if we aren't in them
     for channel in &channels {
         emoji_index::join_channel_if_necessary(&client, &token, channel, our_bot_user);
-        emoji_index::process_channel_history(&client, &token, channel);
+        let users_and_emojis = emoji_index::process_channel_history(&client, &token, channel);
+        if !users_and_emojis.is_empty() {
+            //TODO change this to combine for all channels and not a new copy for each
+            println!("end: {:?}", users_and_emojis);
+        }
     }
-    
+
     Ok(())
 }
-// {user : {emoji : count}}
-//

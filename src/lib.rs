@@ -17,7 +17,6 @@ pub fn join_channel_if_necessary<R>(
 where
     R: slack::requests::SlackWebRequestSender,
 {
-    let channel_name = &channel.name.clone().unwrap();
     if !channel
         .members
         .as_ref()
@@ -27,7 +26,7 @@ where
     {
         // println!("joining {}", &channel_name);
         let request = slack::channels::JoinRequest {
-            name: &channel_name,
+            name: &channel.name.clone().unwrap(),
             validate: Some(true),
         };
         let response = slack::channels::join(slack_client, slack_api_token, &request);
@@ -38,51 +37,76 @@ where
     }
 }
 
-pub fn process_channel_history<R>(client: &R, api_token: &str, channel: &slack::Channel)
+pub fn process_channel_history<R>(
+    client: &R,
+    api_token: &str,
+    channel: &slack::Channel,
+) -> std::vec::Vec<MessageEmojiData>
 where
     R: slack::requests::SlackWebRequestSender,
 {
-    let request = slack::channels::HistoryRequest {
-        channel: &channel.id.clone().unwrap(),
-        inclusive: Some(true),
-        latest: None,
-        oldest: None,
-        count: Some(200),
-        unreads: Some(true),
-    };
-    let response = slack::channels::history(client, &api_token, &request);
-    if let Ok(response) = response {
-        // println!("{:?}", response.messages.clone().unwrap());
-        process_messages(&response.messages.unwrap());
-    } else {
-        println!("{:?}", response);
+    let mut users_and_emojis: Vec<MessageEmojiData> = Vec::new();
+
+    //TODO: while there are more messages
+    loop {
+        let request = slack::channels::HistoryRequest {
+            channel: &channel.id.clone().unwrap(),
+            inclusive: Some(true),
+            latest: None,
+            oldest: None,
+            count: Some(200),
+            unreads: Some(true),
+        };
+        let response = slack::channels::history(client, &api_token, &request);
+
+        if let Ok(response) = response {
+            for message in &response.messages.unwrap() {
+                process_message(message, &mut users_and_emojis);
+            }
+            if let Some(false) = response.has_more {
+                break;
+            }
+        } else {
+            println!("unable to get messages {:?}", response);
+            //return an error or break
+            break;
+        }
     }
+
+    users_and_emojis
 }
 
-fn process_messages(messages: &[slack::Message]) {
-    //need a mutable hash of user: [<emoji : count>] that we can add to efficiently
-    for message in messages {
-        //TODO if let here, but how exactly?
-        match message {
-            slack::Message::Standard(m) => {
-                let parsed_messages = get_emoji_counts_from_message(m);
-                println!("{:?}", parsed_messages);
-                //TODO add a 
+fn process_message(message: &slack::Message, users_and_emojis: &mut Vec<MessageEmojiData>) {
+    //we only care about standard messages where we find emojis. otherwise we just keep going
+    if let slack::Message::Standard(m) = message {
+        if let Some(message_emoji_data) = get_emoji_counts_from_message(m) {
+            // check if we already have data for our user and update the counts or add a new entry
+            if let Some(existing_user_data) = users_and_emojis
+                .iter_mut()
+                .find(|md| md.user == message_emoji_data.user)
+            {
+                for emoji_cnt in message_emoji_data.emojis_and_counts {
+                    existing_user_data.update_emoji_cnt(emoji_cnt.0, emoji_cnt.1);
+                }
+            } else {
+                users_and_emojis.push(message_emoji_data);
             }
-            _ => (),
         }
     }
 }
-// TODO turn this into something that takes a reference to the current HashMap of all users and just adds for ours?
-// also, move this stuff to lib.rs once it's working
-fn get_emoji_counts_from_message(
-    message: &slack::MessageStandard,
-) -> HashMap<String, HashMap<String, u32>> {
-    let m = message.text.clone().unwrap();
-    let mut u = HashMap::new();
-    let x = extract_emojis(&m);
-    u.insert(message.user.clone().unwrap(), x);
-    u
+
+fn get_emoji_counts_from_message(message: &slack::MessageStandard) -> Option<MessageEmojiData> {
+    let user = message.user.clone().unwrap();
+    let message = message.text.clone().unwrap();
+
+    let emojis_and_counts = extract_emojis(&message);
+    if emojis_and_counts.is_empty() {
+        return None;
+    }
+    Some(MessageEmojiData {
+        user,
+        emojis_and_counts,
+    })
 }
 
 fn extract_emojis(text: &str) -> HashMap<String, u32> {
@@ -107,6 +131,23 @@ fn extract_emojis(text: &str) -> HashMap<String, u32> {
     }
 
     res
+}
+
+#[derive(Clone, Debug)]
+pub struct MessageEmojiData {
+    user: String,
+    //emoji name: count of occurences for user
+    emojis_and_counts: HashMap<String, u32>,
+}
+
+impl MessageEmojiData {
+    fn update_emoji_cnt(&mut self, emoji: String, count: u32) {
+        if let Some(cnt) = self.emojis_and_counts.get_mut(&emoji) {
+            *cnt += count;
+        } else {
+            self.emojis_and_counts.insert(emoji, count);
+        }
+    }
 }
 
 // use std::sync::mpsc;
