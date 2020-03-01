@@ -14,9 +14,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = slack::users::list(&client, &token, &slack::users::ListRequest::default());
     let users = response.expect("unable to get users").members.unwrap();
 
-    //TODO possible to do this in a one liner? .find() is only one element
-    // let ignored_users = users.iter().take_while(|u| u.is_bot == Some(true)).collect();
-    // think ^this stops when any returns false. and the collect isn't quite right
+    //would be nice to have conversations API instead of mpim, im, channels, groups
+    //TODO: should change process_channel_history to take any history type and parse the messages
+
+    // let response = slack::groups::list(&client, &token, &slack::groups::ListRequest::default());
+    // if let Ok(response) = response {
+    //     for group in response.groups.unwrap().into_iter() {
+    //         let request = slack::groups::HistoryRequest {
+    //             channel: &group.id.unwrap()[..],
+    //             inclusive: Some(true),
+    //             latest: None,
+    //             oldest: None,
+    //             count: Some(200),
+    //             unreads: Some(true),
+    //         };
+    //         let response = slack::groups::history(&client, &token, &request);
+    //         println!("{:?}", response); //this returns a malformed response currently :/
+    //     }
+    // }
 
     let mut ignored_users = Vec::new();
     for user in &users {
@@ -30,14 +45,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .find(|u| u.real_name == Some(BOT_NAME.to_string()))
         .expect("unable to find our bot user. exiting");
 
+    let mut combined_results = Vec::new();
     for channel in &channels {
-        emoji_index::join_channel_if_necessary(&client, &token, channel, our_bot_user);
+        if !emoji_index::is_member_of_channel(&our_bot_user, &channel) {
+            let response = emoji_index::join_channel(&client, &token, &channel);
+            if let Err(response) = response {
+                println!("Unable to join channel. Skipping. Response: {:?}", response);
+                continue;
+            }
+        }
         let users_and_emojis = emoji_index::process_channel_history(&client, &token, channel);
         if !users_and_emojis.is_empty() {
-            //TODO change this to combine for all channels and not a new copy for each
-            println!("end: {:?}", users_and_emojis);
+            combined_results.push(users_and_emojis);
         }
     }
+
+    emoji_index::display_final_results(combined_results, &client, &token);
 
     Ok(())
 }
