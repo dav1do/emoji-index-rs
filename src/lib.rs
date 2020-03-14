@@ -5,6 +5,10 @@ use std::collections::HashMap;
 #[macro_use]
 extern crate lazy_static;
 
+lazy_static! {
+    static ref EMOJI_REGEX: Regex = Regex::new(r":([a-z1-9-_]+?):").unwrap();
+}
+
 pub fn display_final_results<R>(multiple_results: Vec<Vec<UserEmojiData>>, client: &R, token: &str)
 where
     R: slack::requests::SlackWebRequestSender,
@@ -14,17 +18,14 @@ where
         let request = slack::users::InfoRequest {
             user: &data.user[..],
         };
-        let mut user_name = data.user.clone();
-        let response = slack::users::info(client, &token, &request);
-        if let Ok(response) = response {
-            if let Some(profile) = response.user.unwrap().profile {
-                if let Some(name) = profile.real_name_normalized {
-                    user_name = name;
-                } else if let Some(name) = profile.display_name_normalized {
-                    user_name = name;
-                }
-            }
-        }
+        let response = slack::users::info(client, &token, &request).expect("unable to get user info");
+        let user_name = response
+            .user
+            .unwrap()
+            .profile
+            .and_then(|p| p.real_name_normalized.or(p.display_name_normalized))
+            .unwrap_or(data.user.clone());
+
         display_results_for_user(&user_name, &data.emojis_and_counts, Some(5));
     }
 }
@@ -149,7 +150,6 @@ fn get_emoji_counts_from_message(message: &slack::Message) -> Option<UserEmojiDa
         slack::Message::Standard(m) => {
             let user = m.user.clone().unwrap();
             let message = m.text.clone().unwrap();
-            
             if let Some(thread) = &m.thread_ts {
                 //look in the thread for info (conversations.replies)
                 //need to consider how to separate each user reply
@@ -170,10 +170,6 @@ fn get_emoji_counts_from_message(message: &slack::Message) -> Option<UserEmojiDa
 }
 
 fn extract_emojis(text: &str) -> HashMap<String, u32> {
-    lazy_static! {
-        //this finds :: as a valid emoji :/
-        static ref EMOJI_REGEX: Regex = Regex::new(r":([a-z1-9-_]+?):").unwrap();
-    }
     let mut res = HashMap::new();
 
     let emojis: Vec<&str> = EMOJI_REGEX
@@ -182,10 +178,10 @@ fn extract_emojis(text: &str) -> HashMap<String, u32> {
         .collect();
 
     for emoji in emojis {
-        //remove the : from start and end. 
+        //remove the : from start and end.
         //going to assume the byte works since it's not grapheme clusters or anything
-        let e = emoji[1..(emoji.len()-1)].to_string();
-        if e.contains("skin-tone"){
+        let e = emoji[1..(emoji.len() - 1)].to_string();
+        if e.contains("skin-tone") {
             continue; //don't add the skin tone stuff e.g. :wave::skin-tone-3:
         }
         if let Some(count) = res.get_mut(&e) {
@@ -293,7 +289,6 @@ mod tests {
         let res = get_emoji_counts_from_message(&message);
         assert_eq!(None, res);
     }
-        
     #[test]
     fn parse_channel_join_message_is_none() {
         let message = slack::Message::ChannelJoin(slack::MessageChannelJoin {
